@@ -28,8 +28,18 @@ function widgetMeta(widget: ContentWidget) {
   } as const;
 }
 
+// Function to fetch products from DummyJSON API
+const fetchProducts = async (query: string) => {
+  const response = await fetch(`https://dummyjson.com/products/search?q=${encodeURIComponent(query)}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch products: ${response.statusText}`);
+  }
+  return await response.json();
+};
+
 const handler = createMcpHandler(async (server) => {
   const html = await getAppsSdkCompatibleHtml(baseURL, "/");
+  const productsHtml = await getAppsSdkCompatibleHtml(baseURL, "/products");
 
   const contentWidget: ContentWidget = {
     id: "show_content",
@@ -41,6 +51,18 @@ const handler = createMcpHandler(async (server) => {
     description: "Displays the homepage content",
     widgetDomain: "https://nextjs.org/docs",
   };
+
+  const productsWidget: ContentWidget = {
+    id: "search_products",
+    title: "Search Products",
+    templateUri: "ui://widget/products-template.html",
+    invoking: "Searching products...",
+    invoked: "Products loaded",
+    html: productsHtml,
+    description: "Search and display products in a carousel",
+    widgetDomain: "https://dummyjson.com",
+  };
+  // Register content widget resource
   server.registerResource(
     "content-widget",
     contentWidget.templateUri,
@@ -69,6 +91,36 @@ const handler = createMcpHandler(async (server) => {
     })
   );
 
+  // Register products widget resource
+  server.registerResource(
+    "products-widget",
+    productsWidget.templateUri,
+    {
+      title: productsWidget.title,
+      description: productsWidget.description,
+      mimeType: "text/html+skybridge",
+      _meta: {
+        "openai/widgetDescription": productsWidget.description,
+        "openai/widgetPrefersBorder": true,
+      },
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "text/html+skybridge",
+          text: `<html>${productsWidget.html}</html>`,
+          _meta: {
+            "openai/widgetDescription": productsWidget.description,
+            "openai/widgetPrefersBorder": true,
+            "openai/widgetDomain": productsWidget.widgetDomain,
+          },
+        },
+      ],
+    })
+  );
+
+  // Register content tool
   server.registerTool(
     contentWidget.id,
     {
@@ -94,6 +146,55 @@ const handler = createMcpHandler(async (server) => {
         },
         _meta: widgetMeta(contentWidget),
       };
+    }
+  );
+
+  // Register products search tool
+  server.registerTool(
+    productsWidget.id,
+    {
+      title: productsWidget.title,
+      description: "Search for products and display them in a carousel",
+      inputSchema: {
+        query: z.string().describe("The search query for products (e.g., 'phone', 'laptop')"),
+      },
+      _meta: widgetMeta(productsWidget),
+    },
+    async ({ query }) => {
+      try {
+        const productsData = await fetchProducts(query);
+        
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Found ${productsData.total} products for "${query}"`,
+            },
+          ],
+          structuredContent: {
+            query: query,
+            products: productsData.products,
+            total: productsData.total,
+            timestamp: new Date().toISOString(),
+          },
+          _meta: widgetMeta(productsWidget),
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error searching for products: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            },
+          ],
+          structuredContent: {
+            query: query,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            timestamp: new Date().toISOString(),
+          },
+          _meta: widgetMeta(productsWidget),
+        };
+      }
     }
   );
 });
